@@ -122,11 +122,9 @@ def train_model(epochs=10):
     plt.ylabel('Loss')
     plt.show()
 
-    # Uložení modelu
     torch.save(model.state_dict(), 'models/saved_model.pth')
     print("Model uložen do models/saved_model.pth")
 
-# Krok 6: Evaluace (přesnost, rychlost, stability)
 def evaluate_model():
     model.eval()
     y_true = []
