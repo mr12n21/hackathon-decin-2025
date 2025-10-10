@@ -9,9 +9,7 @@ from tensorflow.keras.utils import to_categorical
 # --- Nastavení ---
 IMG_SIZE = 64
 PATCH_SIZE = 32
-# Images are stored under the repository's `data/img` directory (class subfolders inside).
-# Previously the script pointed at 'data' which caused attempts to list non-existent
-# class folders like 'data/L-mode'. Point DATA_DIR to the img folder instead.
+
 DATA_DIR = os.path.join('data', 'img')
 BATCH_SIZE = 32
 EPOCHS = 20
