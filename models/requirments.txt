@@ -1,0 +1,9 @@
+numpy>=2.1.1  # 2.1+ supports Python 3.13
+pandas>=2.2.3
+pillow>=10.4.0
+opencv-python>=4.10.0.84
+torch>=2.5.0  # 2.5.0+ has better 3.13 support; use latest for full compatibility
+torchvision>=0.20.0  # Match torch version
+scikit-learn>=1.5.2
+matplotlib>=3.9.2
+seaborn>=0.13.2
