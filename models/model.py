@@ -10,12 +10,10 @@ from tensorflow.keras.utils import to_categorical
 IMG_SIZE = 64
 PATCH_SIZE = 32
 
-DATA_DIR = os.path.join('data', 'img')
+DATA_DIR = os.path.join('data')
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS = 200
 USE_ALPHA = True
-
-
 # --- Funkce pro načtení obrázků ---
 def load_images_from_folder(folder_path, label):
     images, labels = [], []

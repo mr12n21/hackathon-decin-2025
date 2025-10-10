@@ -87,7 +87,7 @@ if __name__ == "__main__":
     # Resolve example paths relative to this script so the defaults work when
     # running from the repository root or from the `models` directory.
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    single_image_path = os.path.join(base_dir, "data", "test.jpg")  # Nahraďte cestou k vašemu obrázku
+    single_image_path = os.path.join(base_dir, "data", "ff6920018c77564904e48e28f1e56dfd.jpg")  # Nahraďte cestou k vašemu obrázku
     print("Predikce na jednom obrázku:")
     predict_single_image(single_image_path)
     print("\n" + "="*50 + "\n")
