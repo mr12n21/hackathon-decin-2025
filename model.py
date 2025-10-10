@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from pathlib import Path
 from const import *
 
 
@@ -41,6 +42,7 @@ class Model:
         y = to_categorical(y_numeric)
         return y
 
+
     def split_data(self):
         X = self.get_X()
         y = self.get_y()
@@ -53,6 +55,46 @@ class Model:
         )
 
         return X_train, X_test, y_train, y_test
+
+
+    def get_paths_from_dir(self, data_dir): # Získání cest obrázků z UŽ SPLITNUTÉHO data setu
+        base = Path(data_dir)
+        image_paths = []
+        labels = []
+
+        for path in base.rglob("*"):
+            if path.suffix.lower() not in [".jpg", ".jpeg", ".png"]:
+                continue
+            image_paths.append(str(path))
+            labels.append(path.parent.name) # label = název nadřazené složky, tedy příznaků
+
+        return image_paths, labels
+
+    
+    def get_data_from_dir(self, data_dir): # Získání dat z UŽ SPLITNUTÉHO data setu 
+        X_train_paths, y_train_text = self.get_paths_from_dir(f"{data_dir}/train")
+        X_test_paths, y_test_text = self.get_paths_from_dir(f"{data_dir}/valid")
+        X_train = [] # Tato funkce jen používá stejnou logiku, jako u jiných funkcí
+        X_test = [] # Tudíž viz komentáře tam
+
+        for path in X_train_paths:
+            X_train.append(self.load_image(path))
+        X_train = np.array(X_train)
+
+        for path in X_test_paths:
+            X_test.append(self.load_image(path))
+        X_test = np.array(X_test)
+
+        y_train_numeric = self.encoder.fit_transform(y_train_text)
+        y_test_numeric = self.encoder.fit_transform(y_train_text)
+        y_train = to_categorical(y_train_numeric)
+        y_test = to_categorical(y_test_numeric)
+
+        return X_train, X_test, y_train, y_test
+
+
+    def get_data_generators(self, data)
+
 
     # CNN!!!
     def build_model(self, m, n): # m: počet neuronů, n: dropout

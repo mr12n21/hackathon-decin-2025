@@ -2,7 +2,9 @@ from model import *
 from const import *
 
 m = Model("labels.csv")
-X_train, X_test, y_train, y_test = m.split_data()
+X_train, X_test, y_train, y_test = m.get_data_from_dir("dataset_split")
+
+
 
 model = m.build_model(NEURON_COUNT, DROPOUT) # opět z const.py
 
@@ -13,4 +15,4 @@ history = model.fit(
     validation_data=(X_test, y_test)
 )
 
-model.save("cnn_model.keras")
+#model.save("cnn_model.keras")
