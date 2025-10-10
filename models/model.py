@@ -1,26 +1,48 @@
 import os
 import pandas as pd
 import numpy as np
-from PIL import Image
 import cv2
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import models, transforms
-from sklearn.model_selection import GroupShuffleSplit
+from PIL import Image
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, BatchNormalization, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.preprocessing.image import ImageDataGenerator  # Pro augmentace
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.optimizers import Adam
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
-import time
 import seaborn as sns
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Používám zařízení: {device}")
+# --- Nastavení ---
+IMG_SIZE = 128
+PATCH_SIZE = 32
+DATA_DIR = 'dataset/'
+CSV_PATH = os.path.join(DATA_DIR, 'labels.csv')
+IMG_DIR = os.path.join(DATA_DIR, 'img/')
+BATCH_SIZE = 32
+EPOCHS = 20
+USE_ALPHA = True
 
-data_dir = 'data/'
-csv_path = os.path.join(data_dir, 'labels.csv')
-df = pd.read_csv(csv_path)
+def load_and_patch_image(img_path, use_alpha=USE_ALPHA):
+    img = Image.open(img_path).convert('RGB')
+    img_array = img_to_array(img) / 255.0
+    patches = []
+    for i in range(0, IMG_SIZE, PATCH_SIZE):
+        for j in range(0, IMG_SIZE, PATCH_SIZE):
+            patch = img_array[i:i+PATCH_SIZE, j:j+PATCH_SIZE]
+            if patch.shape == (PATCH_SIZE, PATCH_SIZE, 3):
+                if use_alpha:
+                    gray = cv2.cvtColor((patch * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+                    _, alpha = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+                    alpha = alpha.astype(np.float32) / 255.0
+                    alpha *= np.random.uniform(0.8, 1.2)
+                    alpha = np.clip(alpha, 0, 1)
+                    patch = np.concatenate([patch, alpha[..., np.newaxis]], axis=-1)
+                patches.append(patch)
+    return patches
 
+df = pd.read_csv(CSV_PATH)
 mode_map = {'L-mode': 0, 'H-mode': 1, 'ELM': 2}
 df['label'] = df['mode'].map(mode_map)
 
@@ -28,151 +50,104 @@ print("Distribuce tříd:")
 print(df['mode'].value_counts())
 
 class_counts = df['label'].value_counts().sort_index()
-class_weights = 1. / class_counts
-class_weights = class_weights / class_weights.sum() * len(class_weights)
-class_weights = torch.tensor(class_weights.values, dtype=torch.float).to(device)
+class_weights = {i: max(class_counts) / count for i, count in enumerate(class_counts)}
 
-class PlasmaDataset(Dataset):
-    def __init__(self, df, img_dir, transform=None, use_alpha=True):
-        self.df = df
-        self.img_dir = img_dir
-        self.transform = transform
-        self.use_alpha = use_alpha
+X, y = [], []
+for _, row in df.iterrows():
+    img_path = os.path.join(IMG_DIR, row['filename'])
+    if os.path.exists(img_path):
+        patches = load_and_patch_image(img_path)
+        X.extend(patches)
+        y.extend([row['label']] * len(patches))
 
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        img_path = os.path.join(self.img_dir, row['filename'])
-        image = Image.open(img_path).convert('RGB')
-
-        if self.use_alpha:
-            img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-            _, alpha = cv2.threshold(img_cv, 50, 255, cv2.THRESH_BINARY)  # Prah pro světlé části
-            alpha = Image.fromarray(alpha).convert('L')  # Alpha jako PIL Image
-
-            if self.transform:
-                alpha = np.array(alpha).astype(np.float32)
-                alpha = alpha * np.random.uniform(0.8, 1.2)  # Variace intenzity
-                alpha = np.clip(alpha, 0, 255).astype(np.uint8)
-                alpha = Image.fromarray(alpha)
-
-            # Stack RGB + Alpha
-            image = Image.merge('RGBA', (image.split()[0], image.split()[1], image.split()[2], alpha))
-
-        label = row['label']
-        if self.transform:
-            image = self.transform(image)
-        return image, label
-
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406, 0.0], std=[0.229, 0.224, 0.225, 1.0]) if use_alpha else  # Pro RGBA
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Pro RGB
-])
+X = np.array(X)
+y = to_categorical(np.array(y), num_classes=3)
 
 gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
-train_idx, test_idx = next(gss.split(df, groups=df['discharge']))
-train_df = df.iloc[train_idx]
-test_df = df.iloc[test_idx]
+train_idx, test_idx = next(gss.split(X, y, groups=df['discharge'].repeat((IMG_SIZE // PATCH_SIZE) ** 2)))
+X_train, X_test = X[train_idx], X[test_idx]
+y_train, y_test = y[train_idx], y[test_idx]
 
-img_dir = os.path.join(data_dir, 'img')  # Složka s obrázky
-train_dataset = PlasmaDataset(train_df, img_dir, transform=transform, use_alpha=True)
-test_dataset = PlasmaDataset(test_df, img_dir, transform=transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()]), use_alpha=True)
+datagen = ImageDataGenerator(
+    rotation_range=10,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+input_shape = (PATCH_SIZE, PATCH_SIZE, 4 if USE_ALPHA else 3)
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', input_shape=input_shape),
+    BatchNormalization(),
+    MaxPooling2D(2,2),
+    Conv2D(64, (3,3), activation='relu'),
+    BatchNormalization(),
+    MaxPooling2D(2,2),
+    Conv2D(128, (3,3), activation='relu'),
+    BatchNormalization(),
+    GlobalAveragePooling2D(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(3, activation='softmax')
+])
 
-model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-model.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=3, bias=False)  # Upraveno pro RGBA
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 3)  # 3 třídy
-model = model.to(device)
+model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
 
-# Loss a optimizer
-criterion = nn.CrossEntropyLoss(weight=class_weights)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+# --- Trénování s class weights ---
+history = model.fit(
+    datagen.flow(X_train, y_train, batch_size=BATCH_SIZE),
+    epochs=EPOCHS,
+    validation_data=(X_test, y_test),
+    class_weight=class_weights
+)
 
-# Krok 5: Trénink
-def train_model(epochs=10):
-    model.train()
-    losses = []
-    for epoch in range(epochs):
-        running_loss = 0.0
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-        avg_loss = running_loss / len(train_loader)
-        losses.append(avg_loss)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
-    
-    # Graf loss
-    plt.plot(losses)
-    plt.title('Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.show()
+# --- Vyhodnocení ---
+loss, acc = model.evaluate(X_test, y_test)
+print(f"Test Accuracy: {acc*100:.2f}%")
+f1 = f1_score(np.argmax(y_test, axis=1), np.argmax(model.predict(X_test), axis=1), average='weighted')
+print(f"F1-score: {f1:.4f}")
 
-    torch.save(model.state_dict(), 'models/saved_model.pth')
-    print("Model uložen do models/saved_model.pth")
+# Confusion matrix
+cm = confusion_matrix(np.argmax(y_test, axis=1), np.argmax(model.predict(X_test), axis=1))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title('Confusion Matrix')
+plt.show()
 
-def evaluate_model():
-    model.eval()
-    y_true = []
-    y_pred = []
-    times = []
-    
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            start = time.time()
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs, 1)
-            end = time.time()
-            times.append((end - start) / inputs.size(0) * 1000)  # ms per snímek
-            
-            y_true.extend(labels.cpu().numpy())
-            y_pred.extend(predicted.cpu().numpy())
-    
-    acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, average='weighted')
-    cm = confusion_matrix(y_true, y_pred)
-    
-    print(f"Přesnost: {acc:.4f}, F1-score: {f1:.4f}")
-    print(f"Průměrná rychlost: {np.mean(times):.2f} ms/snímek")
-    
-    # Confusion matrix graf
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-    plt.title('Confusion Matrix')
-    plt.xlabel('Predikováno')
-    plt.ylabel('Skutečné')
-    plt.show()
-    
-    # Stabilita: Pro seskupené data (příklad pro jeden discharge)
-    sample_discharge = test_df['discharge'].unique()[0]
-    seq_df = test_df[test_df['discharge'] == sample_discharge].sort_values('time')
-    seq_inputs = [test_dataset.__getitem__(i)[0].unsqueeze(0).to(device) for i in seq_df.index - test_df.index[0]]  # Index adjust
-    seq_preds = [model(inp).argmax(1).item() for inp in seq_inputs]
-    print(f"Stabilita pro discharge {sample_discharge}: Predikce sekvence: {seq_preds}")
-    # Zde můžeš detekovat přechody (diff mezi po sobě jdoucími)
+# --- Stabilita (příklad pro jeden discharge) ---
+sample_discharge = df['discharge'].unique()[0]
+seq_df = df[df['discharge'] == sample_discharge].sort_values('time')
+seq_patches = []
+for _, row in seq_df.iterrows():
+    img_path = os.path.join(IMG_DIR, row['filename'])
+    seq_patches.extend(load_and_patch_image(img_path))
 
-# Spuštění
-if __name__ == "__main__":
-    train_model(epochs=10)  # Uprav epochs
-    evaluate_model()
+seq_patches = np.array(seq_patches)
+seq_preds = np.argmax(model.predict(seq_patches), axis=1)
+print(f"Stabilita pro discharge {sample_discharge}: Predikce sekvence (po patchech): {seq_preds}")
 
-    # Bonus: Test bez alpha pro porovnání přesnosti
-    print("\nTest bez alpha pro porovnání:")
-    train_dataset_no_alpha = PlasmaDataset(train_df, img_dir, transform=transform, use_alpha=False)
-    test_dataset_no_alpha = PlasmaDataset(test_df, img_dir, transform=transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()]), use_alpha=False)
-    # Zde retrénuj model bez alpha (uprav conv1 na 3 kanály) a porovnej
-    # (Pro jednoduchost: Spusť znovu s use_alpha=False)
+# --- Export modelu ---
+model.save('saved_model.h5')
+print("Model exportován do saved_model.h5")
+
+# --- Porovnání s/bez alpha kanálu ---
+if USE_ALPHA:
+    print("\nPorovnání bez alpha:")
+    X_train_no_alpha = X_train[..., :3] if USE_ALPHA else X_train
+    X_test_no_alpha = X_test[..., :3]
+    model_no_alpha = Sequential([
+        Conv2D(32, (3,3), activation='relu', input_shape=(PATCH_SIZE, PATCH_SIZE, 3)),
+        BatchNormalization(),
+        MaxPooling2D(2,2),
+        Conv2D(64, (3,3), activation='relu'),
+        BatchNormalization(),
+        MaxPooling2D(2,2),
+        Conv2D(128, (3,3), activation='relu'),
+        BatchNormalization(),
+        GlobalAveragePooling2D(),
+        Dense(128, activation='relu'),
+        Dropout(0.5),
+        Dense(3, activation='softmax')
+    ])
+    model_no_alpha.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    model_no_alpha.fit(datagen.flow(X_train_no_alpha, y_train, batch_size=BATCH_SIZE), epochs=5, validation_data=(X_test_no_alpha, y_test))  # Kratší pro test
+    loss_no, acc_no = model_no_alpha.evaluate(X_test_no_alpha, y_test)
+    print(f"Accuracy bez alpha: {acc_no*100:.2f}% (vs. s alpha: {acc*100:.2f}%)")
