@@ -1,5 +1,16 @@
 from model import *
+from const import *
 
 m = Model("labels.csv")
-print(m.get_y().shape)
-print(m.get_X().shape)
+X_train, X_test, y_train, y_test = m.split_data()
+
+model = m.build_model(NEURON_COUNT, DROPOUT) # opět z const.py
+
+history = model.fit(
+    X_train, y_train,
+    epochs=EPOCHS, # EPOCHS a další jsou z const.py
+    batch_size=BATCH_SIZE,
+    validation_data=(X_test, y_test)
+)
+
+model.save("cnn_model.keras")
