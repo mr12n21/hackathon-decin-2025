@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from pathlib import Path
 from const import *
 
@@ -93,7 +94,24 @@ class Model:
         return X_train, X_test, y_train, y_test
 
 
-    def get_data_generators(self, data)
+    def get_data_generators(self, data_dir, batch_size, target_size): # target_size: norm. rozlišení
+        datagen = ImageDataGenerator(rescale=1./255) # RGB hodnoty na rozsah 0 až 1
+
+        train_generator = datagen.flow_from_directory(
+            f"{data_dir}/train",
+            target_size=target_size,
+            batch_size=batch_size,
+            class_mode="categorical"
+        )
+
+        test_generator = datagen.flow_from_directory(
+            f"{data_dir}/valid",
+            target_size=target_size,
+            batch_size=batch_size,
+            class_mode="categorical"
+        )
+
+        return train_generator, test_generator
 
 
     # CNN!!!
@@ -120,3 +138,4 @@ class Model:
         )
 
         return model
+
