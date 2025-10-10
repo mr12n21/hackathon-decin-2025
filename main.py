@@ -67,3 +67,7 @@ model.fit(X_train, y_train, epochs=20, batch_size=BATCH_SIZE, validation_split=0
 # --- Vyhodnocení ---
 loss, acc = model.evaluate(X_test, y_test)
 print(f"Test Accuracy: {acc*100:.2f}%")
+
+
+model.save('model.h5')
+print("model je exportovan")
