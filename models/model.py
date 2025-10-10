@@ -1,23 +1,31 @@
 import os
 import numpy as np
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Dense, Dropout, BatchNormalization
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from skimage.color import rgb2gray
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
+from sklearn.utils.class_weight import compute_class_weight
 
 # --- Nastavení ---
 IMG_SIZE = 64
 PATCH_SIZE = 32
+# We have 3 classes (L-mode, H-mode, ELM)
 NUM_CLASSES = 3
 DATA_DIR = os.path.join('data', 'img')
 BATCH_SIZE = 32
-EPOCHS = 50  # Zvýšeno pro komplexnější trénování
-USE_ALPHA = True  # Nyní aktivně použito pro RGBA (4 kanály)
-USE_GRAYSCALE = True  # Přidáno pro grayscale augmentaci
+EPOCHS = 100  # Reduced from 200 to a more typical value; EarlyStopping will stop earlier if needed
+USE_ALPHA = True  # Keep support for alpha channel if present
+USE_GRAYSCALE = True  # Add grayscale augmented patches as extra samples
+
+# Quick debug mode: set env var QUICK_DEBUG=1 to run a short smoke-test (small subset, 1 epoch)
+QUICK_DEBUG = os.environ.get('QUICK_DEBUG') == '1'
 
 # --- Funkce pro načtení obrázků s podporou alpha a grayscale ---
 def load_images_from_folder(folder_path, label):
@@ -25,35 +33,44 @@ def load_images_from_folder(folder_path, label):
     for file in os.listdir(folder_path):
         if file.endswith(('.png', '.jpg')):
             # Načtení obrázku s alpha kanálem, pokud je PNG
-            color_mode = 'rgba' if USE_ALPHA and file.endswith('.png') else 'rgb'
+            # Decide desired channels globally (4 if using alpha, else 3)
+            desired_channels = 4 if USE_ALPHA else 3
+
+            # Load as RGB or RGBA depending on file type; some formats (jpg) load as RGB
+            color_mode = 'rgba' if file.endswith('.png') else 'rgb'
             img = load_img(os.path.join(folder_path, file), target_size=(IMG_SIZE, IMG_SIZE), color_mode=color_mode)
             img_array = img_to_array(img) / 255.0
-            
-            # Pokud RGBA, ale USE_ALPHA=False, odstranit alpha
-            if img_array.shape[-1] == 4 and not USE_ALPHA:
+
+            # If loaded as RGB but we want RGBA, add an alpha channel of ones
+            if img_array.shape[-1] == 3 and desired_channels == 4:
+                alpha = np.ones((IMG_SIZE, IMG_SIZE, 1), dtype=img_array.dtype)
+                img_array = np.concatenate([img_array, alpha], axis=-1)
+
+            # If loaded as RGBA but we want only RGB, drop alpha
+            if img_array.shape[-1] == 4 and desired_channels == 3:
                 img_array = img_array[..., :3]
-            
-            channels = 4 if USE_ALPHA and img_array.shape[-1] == 4 else 3
-            
+
             # Rozdělení na patche
             for i in range(0, IMG_SIZE, PATCH_SIZE):
                 for j in range(0, IMG_SIZE, PATCH_SIZE):
                     patch = img_array[i:i+PATCH_SIZE, j:j+PATCH_SIZE]
-                    if patch.shape == (PATCH_SIZE, PATCH_SIZE, channels):
+                    if patch.shape == (PATCH_SIZE, PATCH_SIZE, desired_channels):
                         # Přidání grayscale verze pro augmentaci, pokud povoleno
                         if USE_GRAYSCALE:
                             gray_patch = rgb2gray(patch[..., :3])  # Grayscale z RGB části
                             gray_patch = np.expand_dims(gray_patch, axis=-1)  # 1 kanál
-                            # Pro kombinaci s alpha: pokud alpha existuje, přidat jako další kanál
-                            if channels == 4:
-                                alpha_channel = patch[..., 3:4]  # Alpha jako samostatný kanál
-                                gray_patch = np.concatenate([gray_patch, alpha_channel], axis=-1)
+                            if desired_channels == 4:
+                                # If model expects 4 channels, replicate grayscale to 3 channels and append alpha
+                                gray_rgb = np.repeat(gray_patch, 3, axis=-1)
+                                alpha_channel = patch[..., 3:4] if patch.shape[-1] == 4 else np.ones_like(gray_patch)
+                                gray_patch_final = np.concatenate([gray_rgb, alpha_channel], axis=-1)
                             else:
-                                gray_patch = np.repeat(gray_patch, 3, axis=-1)  # Opakovat pro 3 kanály
-                            images.append(gray_patch)
+                                # For 3-channel models, repeat grayscale to 3 channels
+                                gray_patch_final = np.repeat(gray_patch, 3, axis=-1)
+                            images.append(gray_patch_final)
                             labels.append(label)
-                        
-                        # Přidání originálního patche
+
+                        # Přidání originálního patche (už má správný počet kanálů)
                         images.append(patch)
                         labels.append(label)
     return images, labels
@@ -99,35 +116,53 @@ datagen = ImageDataGenerator(
 )
 
 # --- Komplexnější CNN model ---
+weight_decay = 1e-4
+
 model = Sequential([
-    Conv2D(64, (3,3), activation='relu', input_shape=(PATCH_SIZE, PATCH_SIZE, channels)),
+    Conv2D(64, (3,3), activation='relu', kernel_regularizer=l2(weight_decay), input_shape=(PATCH_SIZE, PATCH_SIZE, channels)),
     BatchNormalization(),
     MaxPooling2D(2,2),
-    Conv2D(128, (3,3), activation='relu'),
+    Conv2D(128, (3,3), activation='relu', kernel_regularizer=l2(weight_decay)),
     BatchNormalization(),
     MaxPooling2D(2,2),
-    Conv2D(256, (3,3), activation='relu'),
+    Conv2D(256, (3,3), activation='relu', kernel_regularizer=l2(weight_decay)),
     BatchNormalization(),
     MaxPooling2D(2,2),
-    Flatten(),
-    Dense(512, activation='relu'),
-    Dropout(0.5),  # Přidáno pro prevenci overfittingu
-    Dense(256, activation='relu'),
+    GlobalAveragePooling2D(),
+    Dense(512, activation='relu', kernel_regularizer=l2(weight_decay)),
+    Dropout(0.5),
+    Dense(256, activation='relu', kernel_regularizer=l2(weight_decay)),
     Dropout(0.3),
     Dense(NUM_CLASSES, activation='softmax')
 ])
 
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+optimizer = Adam(learning_rate=1e-3)
+model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
 # --- Callbacky pro lepší trénování ---
-early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor='val_loss', patience=12, restore_best_weights=True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
+checkpoint = ModelCheckpoint('best_model.h5', monitor='val_loss', save_best_only=True)
 
 # --- Trénování s augmentací ---
+# Compute class weights to balance the loss for imbalanced dataset
+y_integers = np.argmax(y, axis=1)
+class_weights = compute_class_weight('balanced', classes=np.unique(y_integers), y=y_integers)
+class_weights = dict(enumerate(class_weights))
+
+# QUICK_DEBUG: use a small subset and fewer epochs for fast smoke testing
+if QUICK_DEBUG:
+    EPOCHS = 1
+    # reduce dataset for quick run
+    X_train = X_train[:1024]
+    y_train = y_train[:1024]
+
 model.fit(
     datagen.flow(X_train, y_train, batch_size=BATCH_SIZE),
     epochs=EPOCHS,
     validation_data=(X_test, y_test),
-    callbacks=[early_stopping]
+    callbacks=[early_stopping, reduce_lr, checkpoint],
+    class_weight=class_weights
 )
 
 # --- Vyhodnocení na standardním test setu ---
@@ -173,5 +208,5 @@ if USE_ALPHA and channels == 4:
     print(f"Modified Alpha (0.5) Test Accuracy: {acc_alpha*100:.2f}%")
 
 # --- Uložení modelu ---
-model.save("complex_model.h5")
-print("Model uložen jako 'complex_model.h5'")
+model.save("bramboracek.h5")
+print("Model uložen jako 'bramboracek.h5'")
