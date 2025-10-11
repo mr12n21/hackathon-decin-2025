@@ -115,13 +115,13 @@ class Model:
 
 
     # CNN!!!
-    def build_model(self, m, n): # m: počet neuronů, n: dropout
+    def build_model(self, m, n, o): # m: počet neuronů, n: dropout, o: resolution
         model = Sequential([
             # Konvulace
-            Conv2D(32, (3, 3), activation="relu", input_shape=(64, 64, 3)),
+            Conv2D(int(m/2), (3, 3), activation="relu", input_shape=(o, o, 3)),
             MaxPooling2D(pool_size=(2, 2)),
 
-            Conv2D(64, (3, 3), activation="relu"),
+            Conv2D(m, (3, 3), activation="relu"),
             MaxPooling2D(pool_size=(2, 2)),
 
             # Klasifikace
