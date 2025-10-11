@@ -1,48 +1,30 @@
 from model import *
 from const import *
-
-
-
-#X_train, X_test, y_train, y_test = m.split_data() # PRO TRÉNOVÁNÍ Z TABULKY
-#train_gen, val_gen = m.get_data_generators("dataset_split", BATCH_SIZE, (RESOLUTION, RESOLUTION)) # PRO TRÉNOVÁNÍ Z UŽ SPLITNUTÉHO DATASETU
-
-
-#model = m.build_model(NEURON_COUNT, DROPOUT) # opět z const.py
-
-#history = model.fit( # PRO TRÉNOVÁNÍ Z TABULKY
-#    X_train, y_train,
-#    epochs=EPOCHS, # EPOCHS a další jsou z const.py
-#    batch_size=BATCH_SIZE,
-#    validation_data=(X_test, y_test)
-#)
-
-#history = model.fit( # PRO TRÉNOVÁNÍ Z UŽ SPLITNUTÉHO DATASETU
-#    train_gen,
-#    validation_data=val_gen,
-#    epochs=EPOCHS
-#)
-
-#model.save("cnn_david.keras")
-#loss, acc = model.evaluate(val_gen)
-#print(f"Test accuracy: {acc * 100:.2f}")
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import numpy as np
+import matplotlib.pyplot as plt
 
 m = Model("labels.csv")
 
-for resolution in range(32, 128, 16):
-    for neuron_count in range(64, 256, 32):
-        for dropout in range(2, 5):
-            print("-------------------------- STARTING NEW TRAINING --------------------------")
-            print(f"Resolution: {resolution}, Neuron count: {neuron_count}, Dropout: 0.{dropout}")
+train_gen, val_gen = m.get_data_generators("dataset_split", BATCH_SIZE, (RESOLUTION, RESOLUTION))
+model = m.build_model(NEURON_COUNT, DROPOUT, RESOLUTION)
+model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=EPOCHS
+)
+model.save("cnn_minmax.keras")
+loss, acc = model.evaluate(val_gen)
+print(f"TEST ACCURACY: {acc * 100:.2f}")
 
-            dropout = dropout / 10
-            print(dropout)
-            train_gen, val_gen = m.get_data_generators("dataset_split", BATCH_SIZE, (resolution, resolution))
-            model = m.build_model(neuron_count, dropout, resolution)
-            model.fit(
-                train_gen,
-                validation_data=val_gen,
-                epochs=20
-            )
-            model.save(f"cnn_r{resolution}_nc{neuron_count}_d{dropout}.keras")
-            loss, acc = model.evaluate(val_gen)
-            print(f"TEST ACCURACY: {acc * 100:.2f}")
+y_true = val_gen.classes # Skutečné stavy
+y_pred_probs = model.predict(val_gen) # Předpovědi na základě modelu
+y_pred = np.argmax(y_pred_probs, axis=1) # Vybere nejpravděpodobnější stav ze tří na základě předpovědí
+                                         # (ze tří polí tedy vznikne jedno lajdácky řečeno)
+
+cm = confusion_matrix(y_true, y_pred) # Vytvoří confusion matrix
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=list(val_gen.class_indices.keys()))
+
+disp.plot(cmap="Blues", values_format="d")
+plt.title("Confusion Matrix")
+plt.show()
