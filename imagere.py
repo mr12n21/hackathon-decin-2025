@@ -11,7 +11,7 @@ session = ort.InferenceSession(onnx_path)
 classes = ["L-mode", "H-mode", "ELM"]
 
 # ---- Open video / camera ----
-cap = cv2.VideoCapture(r"C:\Users\v\Downloads\tokamakblack.mp4")  # or use 0 for webcam
+cap = cv2.VideoCapture(r"C:\Users\v\Desktop\video_interpolated_jitter.mp4")  # or use 0 for webcam
 
 last_state = None
 log_file = "tokamakimageanalizer_log.txt"
