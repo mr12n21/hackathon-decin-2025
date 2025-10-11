@@ -20,7 +20,7 @@ PATCH_SIZE = 32
 NUM_CLASSES = 3
 DATA_DIR = os.path.join('data', 'img')
 BATCH_SIZE = 32
-EPOCHS = 100  # Reduced from 200 to a more typical value; EarlyStopping will stop earlier if needed
+EPOCHS = 10  # Reduced from 200 to a more typical value; EarlyStopping will stop earlier if needed
 USE_ALPHA = True  # Keep support for alpha channel if present
 USE_GRAYSCALE = True  # Add grayscale augmented patches as extra samples
 
