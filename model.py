@@ -6,10 +6,9 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from pathlib import Path
-from const import *
 
 
 class Model:
@@ -17,7 +16,7 @@ class Model:
         self.table = pd.read_csv(table) # Načtení tabulky
         self.filenames = tuple(self.table["filename"].values)
         self.encoder = LabelEncoder()
-        self.res = RESOLUTION
+        self.res = 32
     
 
     def load_image(self, path):
@@ -75,7 +74,7 @@ class Model:
     def get_data_from_dir(self, data_dir): # Získání dat z UŽ SPLITNUTÉHO data setu 
         X_train_paths, y_train_text = self.get_paths_from_dir(f"{data_dir}/train")
         X_test_paths, y_test_text = self.get_paths_from_dir(f"{data_dir}/valid")
-        X_train = [] # Tato funkce jen používá stejnou logiku, jako u jiných funkcí
+        X_train = [] # Tato funkce jen používá stejnou logiku, jako u funkcích pro načítání X a y výše
         X_test = [] # Tudíž viz komentáře tam
 
         for path in X_train_paths:
@@ -95,7 +94,7 @@ class Model:
 
 
     def get_data_generators(self, data_dir, batch_size, target_size): # target_size: norm. rozlišení
-        datagen = ImageDataGenerator(rescale=1./255) # RGB hodnoty na rozsah 0 až 1
+        datagen = ImageDataGenerator(rescale=1./255,) # Augmentace hodnot pro obecnější změny
 
         train_generator = datagen.flow_from_directory(
             f"{data_dir}/train",
@@ -126,7 +125,7 @@ class Model:
 
             # Klasifikace
             Flatten(),
-            Dense(m, activation="relu"), # 
+            Dense(m, activation="relu"),
             Dropout(n), # Vypínání neuronů pro prevenci předučení
             Dense(3, activation="softmax")
         ])
