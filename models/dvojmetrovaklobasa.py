@@ -6,7 +6,7 @@ from tensorflow.keras.preprocessing.image import load_img, img_to_array
 IMG_SIZE = 64
 PATCH_SIZE = 32
 CLASS_NAMES = ["L-mode", "H-mode", "ELM"]
-MODEL_PATH = "saved_model.h5"
+MODEL_PATH = "complex_model.h5"
 
 try:
     model = load_model(MODEL_PATH)
