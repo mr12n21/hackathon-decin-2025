@@ -195,7 +195,7 @@ class Model:
 
 # Example usage in main.py
 if __name__ == "__main__":
-    model_instance = Model(table="path/to/your/csv.csv")  # Replace with your CSV path
+    model_instance = Model(table="labels.csv")  # Replace with your CSV path
     X_train, X_test, y_train, y_test = model_instance.split_data()
     model = model_instance.build_model()
     
