@@ -14,13 +14,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import QTimer, Qt
 
-# Matplotlib for live graph
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-
-# ----------------------------------------------------------
-#                  CONFIG / MODEL
 # ----------------------------------------------------------
 CONFIG_FILE = "ui_presets.json"
 onnx_path = "runs/classify/train4/weights/best.onnx"
@@ -30,14 +26,11 @@ classes = ["ELM", "H-mode", "L-mode"]
 
 
 # ----------------------------------------------------------
-#             CSV → VIDEO GENERATION FUNCTION
-# ----------------------------------------------------------
 def generate_video_from_csv(csv_file, img_folder, output_video, discharge_value=0, fps=5):
     df = pd.read_csv(csv_file)
     df = df[df['discharge'] == discharge_value]
     if df.empty:
         raise ValueError(f"No rows found with discharge == {discharge_value}")
-
     df = df.sort_values('time')
 
     first_image_path = os.path.join(img_folder, os.path.basename(df.iloc[0]['filename']))
@@ -65,8 +58,6 @@ def generate_video_from_csv(csv_file, img_folder, output_video, discharge_value=
 
 
 # ----------------------------------------------------------
-#                 LIVE GRAPH CLASS
-# ----------------------------------------------------------
 class LiveGraph(FigureCanvas):
     def __init__(self, max_points=150):
         self.fig = Figure(figsize=(5, 3))
@@ -83,6 +74,21 @@ class LiveGraph(FigureCanvas):
         self.lines = {cls: self.ax.plot([], [], label=cls)[0] for cls in classes}
         self.ax.legend()
 
+        # Reference CSV line
+        self.reference_line = None
+        self.reference_data = []
+
+    def set_reference_line(self, ref_data):
+        self.reference_data = ref_data
+        if self.reference_line:
+            self.reference_line.remove()
+        x = list(range(len(ref_data)))
+        y = ref_data
+        self.reference_line, = self.ax.plot(x, y, linestyle='dotted', color='green', label='CSV Reference')
+        if 'CSV Reference' not in [l.get_label() for l in self.ax.lines]:
+            self.ax.legend()
+        self.ax.figure.canvas.draw_idle()
+
     def update_plot(self, probs):
         for cls, prob in zip(classes, probs):
             self.data[cls].append(float(prob))
@@ -97,36 +103,37 @@ class LiveGraph(FigureCanvas):
             self.data[cls].clear()
         for line in self.lines.values():
             line.set_data([], [])
+        if self.reference_line:
+            self.reference_line.remove()
+            self.reference_line = None
         self.ax.figure.canvas.draw_idle()
 
 
 # ----------------------------------------------------------
-#                 MAIN UI CLASS
-# ----------------------------------------------------------
 class TokamakUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Tokamak Analyzer (with Presets)")
+        self.setWindowTitle("Tokamak Analyzer (CSV Reference)")
         self.resize(1300, 800)
         self.setAcceptDrops(True)
 
-        # --- Left side (video feed) ---
+        # Video label
         self.video_label = QLabel("Drop a Video or Image Here")
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setFixedSize(640, 480)
         self.video_label.setStyleSheet("border: 2px dashed #888; color: #888;")
 
-        # --- Right side (analysis + graph) ---
+        # Analysis + graph
         self.analysis_text = QTextEdit()
         self.analysis_text.setReadOnly(True)
         self.analysis_text.setFixedSize(400, 200)
-        self.graph = LiveGraph(max_points=150)
+        self.graph = LiveGraph(max_points=300)
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self.analysis_text)
         right_layout.addWidget(self.graph)
 
-        # --- Preset inputs ---
+        # Presets
         self.csv_path = QLineEdit()
         self.img_folder = QLineEdit()
         self.output_path = QLineEdit()
@@ -156,7 +163,7 @@ class TokamakUI(QWidget):
         form_layout.addRow("Output Video:", h3)
         form_layout.addRow("Discharge:", self.discharge_spin)
 
-        # --- Buttons ---
+        # Buttons
         self.load_btn = QPushButton("Load Video/Image")
         self.load_btn.clicked.connect(self.load_file)
         self.csv_btn = QPushButton("Generate Video from CSV")
@@ -166,7 +173,7 @@ class TokamakUI(QWidget):
         buttons_layout.addWidget(self.load_btn)
         buttons_layout.addWidget(self.csv_btn)
 
-        # --- Combine layouts ---
+        # Layouts
         left_side = QVBoxLayout()
         left_side.addWidget(self.video_label)
         left_side.addLayout(form_layout)
@@ -177,17 +184,18 @@ class TokamakUI(QWidget):
         main_layout.addLayout(right_layout)
         self.setLayout(main_layout)
 
-        # --- Timer ---
+        # Timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
         self.cap = None
 
-        # --- Load saved presets if available ---
+        # Load presets
         self.load_presets()
 
-    # ----------------------------------------------------------
-    #              Drag & Drop Handlers
-    # ----------------------------------------------------------
+        # CSV reference
+        self.reference_data = []
+
+    # Drag & Drop
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -203,11 +211,10 @@ class TokamakUI(QWidget):
             self.handle_new_file(file_path)
             break
 
-    # ----------------------------------------------------------
-    #              File Loading
-    # ----------------------------------------------------------
+    # File Loading
     def load_file(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "Select Video or Image", "", "Media (*.mp4 *.avi *.mov *.png *.jpg *.jpeg)")
+        file_name, _ = QFileDialog.getOpenFileName(self, "Select Video or Image", "",
+                                                   "Media (*.mp4 *.avi *.mov *.png *.jpg *.jpeg)")
         if file_name:
             self.handle_new_file(file_name)
 
@@ -217,7 +224,6 @@ class TokamakUI(QWidget):
         self.timer.stop()
         self.graph.clear_plot()
         self.analysis_text.clear()
-
         if file_path.lower().endswith((".png", ".jpg", ".jpeg")):
             self.show_image(file_path)
         elif file_path.lower().endswith((".mp4", ".avi", ".mov")):
@@ -242,9 +248,7 @@ class TokamakUI(QWidget):
                 self.cap.release()
                 self.timer.stop()
 
-    # ----------------------------------------------------------
-    #              Inference & Display
-    # ----------------------------------------------------------
+    # Inference
     def process_and_display(self, frame):
         img = cv2.resize(frame, (224, 224)).astype(np.float32) / 255.0
         img = np.transpose(img, (2, 0, 1))
@@ -262,13 +266,12 @@ class TokamakUI(QWidget):
         self.graph.update_plot(probs)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        q_img = QImage(frame_rgb.data, frame_rgb.shape[1], frame_rgb.shape[0], frame_rgb.strides[0], QImage.Format.Format_RGB888)
+        q_img = QImage(frame_rgb.data, frame_rgb.shape[1], frame_rgb.shape[0], frame_rgb.strides[0],
+                       QImage.Format.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(q_img).scaled(
             self.video_label.width(), self.video_label.height(), Qt.AspectRatioMode.KeepAspectRatio))
 
-    # ----------------------------------------------------------
-    #              CSV → Video UI Integration
-    # ----------------------------------------------------------
+    # CSV → Video
     def generate_video_ui(self):
         csv_file = self.csv_path.text().strip()
         img_folder = self.img_folder.text().strip()
@@ -282,15 +285,29 @@ class TokamakUI(QWidget):
         self.save_presets(csv_file, img_folder, output_video, discharge_value)
 
         try:
+            # Generate video
             generate_video_from_csv(csv_file, img_folder, output_video, discharge_value, fps=5)
             QMessageBox.information(self, "Done", f"✅ Video generated:\n{output_video}")
+            # Load CSV reference line
+            self.load_csv_reference(csv_file)
             self.handle_new_file(output_video)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to generate video:\n{str(e)}")
 
-    # ----------------------------------------------------------
-    #              Browse Buttons
-    # ----------------------------------------------------------
+    # CSV reference
+    def load_csv_reference(self, csv_file):
+        df = pd.read_csv(csv_file)
+        df = df.sort_values('time')
+        # Map mode to integer value for plotting (example: L-mode=0, H-mode=1, ELM=2)
+        mode_map = {"L-mode": 0, "H-mode": 1, "ELM": 2}
+        ref_data = []
+        for row in df.itertuples():
+            mode_val = mode_map.get(row.mode, 0)
+            # Repeat for number of frames? Here we assume 1 frame per row
+            ref_data.append(mode_val)
+        self.graph.set_reference_line(ref_data)
+
+    # Browse buttons
     def browse_csv(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select CSV", "", "CSV Files (*.csv)")
         if path:
@@ -306,16 +323,9 @@ class TokamakUI(QWidget):
         if path:
             self.output_path.setText(path)
 
-    # ----------------------------------------------------------
-    #              Preset Save/Load
-    # ----------------------------------------------------------
+    # Presets
     def save_presets(self, csv, img, output, discharge):
-        data = {
-            "csv_path": csv,
-            "img_folder": img,
-            "output_path": output,
-            "discharge": discharge
-        }
+        data = {"csv_path": csv, "img_folder": img, "output_path": output, "discharge": discharge}
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f, indent=2)
 
@@ -329,8 +339,6 @@ class TokamakUI(QWidget):
             self.discharge_spin.setValue(data.get("discharge", 0))
 
 
-# ----------------------------------------------------------
-#                  MAIN
 # ----------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
