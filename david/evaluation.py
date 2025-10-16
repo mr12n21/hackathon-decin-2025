@@ -8,7 +8,7 @@ model = load_model("cnn_mid.keras")
 def evaluate_dir(dir_path):
     data_gen = ImageDataGenerator(rescale=1./255)
     val_gen = data_gen.flow_from_directory(
-        "dataset_split/valid/",
+        "img",
         target_size=(32, 32),
         batch_size=8,
         class_mode='categorical',
